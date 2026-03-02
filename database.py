@@ -4,12 +4,13 @@
 
 import sqlite3
 import json
+import asyncio
 from datetime import datetime
 from config import (
-    DB_PATH, 
-    MAX_HISTORY_MESSAGES, 
-    SUMMARY_THRESHOLD, 
-    KEEP_RECENT_MESSAGES, 
+    DB_PATH,
+    MAX_HISTORY_MESSAGES,
+    SUMMARY_THRESHOLD,
+    KEEP_RECENT_MESSAGES,
     MAX_SUMMARIES_COUNT
 )
 
@@ -22,7 +23,6 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Таблица для всех сообщений
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,7 +33,6 @@ def init_db():
         )
     """)
     
-    # Таблица для фактов о пользователе
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_facts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +42,6 @@ def init_db():
         )
     """)
     
-    # Таблица для резюме старых диалогов
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS summaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +52,6 @@ def init_db():
         )
     """)
     
-    # Индексы для ускорения поиска
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user ON messages(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_summaries ON summaries(user_id)")
     
@@ -63,7 +60,7 @@ def init_db():
 
 
 # =============================================================================
-# РАБОТА С ИСТОРИЕЙ СООБЩЕНИЙ
+# РАБОТА С ИСТОРИЕЙ
 # =============================================================================
 
 def get_history(user_id, limit=None):
@@ -74,7 +71,6 @@ def get_history(user_id, limit=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 1. Системный промт
     system_prompt = [{
         "role": "system",
         "content": """Ты Альтушка, дружелюбная девушка-помощник.
@@ -82,7 +78,6 @@ def get_history(user_id, limit=None):
 Отвечай кратко, но с душой. Никогда не показывай свои мысли или тег <think>."""
     }]
     
-    # 2. Загружаем резюме
     cursor.execute("""
         SELECT summary_text FROM summaries 
         WHERE user_id = ? 
@@ -97,7 +92,6 @@ def get_history(user_id, limit=None):
             "content": f"📚 Контекст из прошлого диалога: {row[0]}"
         })
     
-    # 3. Загружаем последние сообщения
     cursor.execute("""
         SELECT role, content FROM messages 
         WHERE user_id = ? 
@@ -115,10 +109,8 @@ def get_message_count(user_id):
     """Возвращает количество сообщений пользователя"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("SELECT COUNT(*) FROM messages WHERE user_id = ?", (user_id,))
     count = cursor.fetchone()[0]
-    
     conn.close()
     return count
 
@@ -127,13 +119,11 @@ def get_old_messages_for_summary(user_id, keep_count=KEEP_RECENT_MESSAGES):
     """Возвращает старые сообщения для создания резюме"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("""
         SELECT role, content FROM messages 
         WHERE user_id = ? 
         ORDER BY timestamp ASC
     """, (user_id,))
-    
     all_messages = cursor.fetchall()
     conn.close()
     
@@ -143,40 +133,37 @@ def get_old_messages_for_summary(user_id, keep_count=KEEP_RECENT_MESSAGES):
 
 
 def add_message(user_id, role, content, auto_summary=True):
-    """Добавляет сообщение в базу и автоматически создаёт резюме"""
+    """Добавляет сообщение в базу"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute(
         "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
         (user_id, role, content)
     )
-    
     conn.commit()
     conn.close()
     
     if auto_summary:
-        check_and_create_summary(user_id)
+        # Запускаем создание резюме в фоне (не блокируем бота)
+        asyncio.create_task(check_and_create_summary_async(user_id))
 
 
 def clear_history(user_id):
     """Очищает историю пользователя"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM summaries WHERE user_id = ?", (user_id,))
-    
     conn.commit()
     conn.close()
 
 
 # =============================================================================
-# АВТОМАТИЧЕСКОЕ СОЗДАНИЕ РЕЗЮМЕ
+# АВТОМАТИЧЕСКОЕ СОЗДАНИЕ РЕЗЮМЕ (ASYNC Версия)
 # =============================================================================
 
-def check_and_create_summary(user_id):
-    """Проверяет и создаёт резюме через LLM"""
+async def check_and_create_summary_async(user_id):
+    """Асинхронная версия проверки и создания резюме"""
     count = get_message_count(user_id)
     
     if count < SUMMARY_THRESHOLD:
@@ -194,12 +181,8 @@ def check_and_create_summary(user_id):
     
     messages_text = "\n".join([f"{role}: {content}" for role, content in old_messages[:40]])
     
-    import asyncio
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        summary = loop.run_until_complete(create_summary(messages_text))
-        loop.close()
+        summary = await create_summary(messages_text)
     except Exception as e:
         print(f"⚠️ Ошибка создания резюме: {e}")
         return
@@ -211,16 +194,18 @@ def check_and_create_summary(user_id):
     print(f"✅ Резюме создано для пользователя {user_id}")
 
 
+# =============================================================================
+# СОХРАНЕНИЕ РЕЗЮМЕ
+# =============================================================================
+
 def save_summary(user_id, summary_text, message_range="auto"):
     """Сохраняет резюме в базу"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("""
         INSERT INTO summaries (user_id, summary_text, message_range) 
         VALUES (?, ?, ?)
     """, (user_id, summary_text, message_range))
-    
     conn.commit()
     conn.close()
 
@@ -229,7 +214,6 @@ def delete_old_summaries(user_id, keep_count=MAX_SUMMARIES_COUNT):
     """Удаляет старые резюме"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("""
         DELETE FROM summaries 
         WHERE user_id = ? 
@@ -240,7 +224,6 @@ def delete_old_summaries(user_id, keep_count=MAX_SUMMARIES_COUNT):
             LIMIT ?
         )
     """, (user_id, user_id, keep_count))
-    
     conn.commit()
     conn.close()
 
@@ -249,7 +232,6 @@ def delete_old_messages(user_id, keep_count=KEEP_RECENT_MESSAGES):
     """Удаляет старые сообщения"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("""
         DELETE FROM messages 
         WHERE user_id = ? 
@@ -260,7 +242,6 @@ def delete_old_messages(user_id, keep_count=KEEP_RECENT_MESSAGES):
             LIMIT ?
         )
     """, (user_id, user_id, keep_count))
-    
     conn.commit()
     conn.close()
 
@@ -273,18 +254,14 @@ def save_fact(user_id, key, value):
     """Сохраняет факт о пользователе"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("SELECT facts_json FROM user_facts WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    
     facts = json.loads(row[0]) if row else {}
     facts[key] = value
-    
     cursor.execute("""
         INSERT OR REPLACE INTO user_facts (user_id, facts_json) 
         VALUES (?, ?)
     """, (user_id, json.dumps(facts, ensure_ascii=False)))
-    
     conn.commit()
     conn.close()
 
@@ -293,12 +270,9 @@ def get_facts(user_id):
     """Получает все факты о пользователе"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     cursor.execute("SELECT facts_json FROM user_facts WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    
     conn.close()
-    
     return json.loads(row[0]) if row else {}
 
 
@@ -306,7 +280,6 @@ def get_database_stats():
     """Возвращает статистику по базе данных"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     stats = {}
     cursor.execute("SELECT COUNT(DISTINCT user_id) FROM messages")
     stats['total_users'] = cursor.fetchone()[0]
@@ -314,18 +287,5 @@ def get_database_stats():
     stats['total_messages'] = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM summaries")
     stats['total_summaries'] = cursor.fetchone()[0]
-    
     conn.close()
     return stats
-
-
-def get_all_user_ids():
-    """Возвращает список всех пользователей"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT DISTINCT user_id FROM messages")
-    user_ids = [row[0] for row in cursor.fetchall()]
-    
-    conn.close()
-    return user_ids

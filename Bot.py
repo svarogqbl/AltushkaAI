@@ -1,3 +1,7 @@
+# =============================================================================
+# BOT.PY — Telegram-бот AltushkaAI
+# =============================================================================
+
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
@@ -17,6 +21,10 @@ dp = Dispatcher()
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
+
+# =============================================================================
+# ОБРАБОТЧИКИ КОМАНД
+# =============================================================================
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -68,8 +76,8 @@ async def cmd_search(message: types.Message):
         
         ai_response = await get_llm_response(history)
         
-        add_message(user_id, "user", query)
-        add_message(user_id, "assistant", ai_response)
+        add_message(user_id, "user", query, auto_summary=True)
+        add_message(user_id, "assistant", ai_response, auto_summary=False)
         
         await status_msg.edit_text(ai_response)
     except Exception as e:
@@ -103,7 +111,7 @@ async def chat_handler(message: types.Message):
         needs_search, search_query = needs_search_simple(user_text)
         
         if needs_search:
-            status_msg = await message.answer(f"🔎 Ищу: {search_query}...")
+            status_msg = await message.answer(f"🔎 Ищу информацию...")
             search_results = await search_searxng(search_query, max_results=4)
             
             history = get_history(user_id)
@@ -112,8 +120,8 @@ async def chat_handler(message: types.Message):
             
             ai_response = await get_llm_response(history)
             
-            add_message(user_id, "user", user_text)
-            add_message(user_id, "assistant", ai_response)
+            add_message(user_id, "user", user_text, auto_summary=True)
+            add_message(user_id, "assistant", ai_response, auto_summary=False)
             
             await status_msg.edit_text(ai_response)
         else:
@@ -122,13 +130,17 @@ async def chat_handler(message: types.Message):
             
             ai_response = await get_llm_response(history)
             
-            add_message(user_id, "user", user_text)
-            add_message(user_id, "assistant", ai_response)
+            add_message(user_id, "user", user_text, auto_summary=True)
+            add_message(user_id, "assistant", ai_response, auto_summary=False)
             
             await message.answer(ai_response)
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
+
+# =============================================================================
+# ЗАПУСК
+# =============================================================================
 
 async def main():
     """Точка входа"""

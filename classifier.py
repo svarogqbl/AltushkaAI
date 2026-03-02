@@ -18,7 +18,7 @@ def needs_search_simple(query: str) -> tuple[bool, str]:
     
     if "?" in query and len(query) < 100:
         if any(word in query_lower for word in ["что", "кто", "где", "когда", "как"]):
-            personal_words = ["меня", "моё", "моя", "мой", "нам", "наш", "тебя", "твоё", "ты"]
+            personal_words = ["меня", "моё", "моя", "мой", "нам", "наш", "тебя", "твоё", "ты", "твои"]
             if not any(word in query_lower for word in personal_words):
                 return True, query
     
