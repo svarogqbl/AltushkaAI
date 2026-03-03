@@ -81,7 +81,7 @@ def get_history(user_id, limit=None):
     cursor.execute("""
         SELECT summary_text FROM summaries 
         WHERE user_id = ? 
-        ORDER BY created_at DESC 
+        ORDER BY created_at ASC 
         LIMIT ?
     """, (user_id, MAX_SUMMARIES_COUNT))
     
@@ -95,14 +95,14 @@ def get_history(user_id, limit=None):
     cursor.execute("""
         SELECT role, content FROM messages 
         WHERE user_id = ? 
-        ORDER BY timestamp DESC 
+        ORDER BY timestamp ASC 
         LIMIT ?
     """, (user_id, limit))
     
     messages = [{"role": row[0], "content": row[1]} for row in cursor.fetchall()]
     conn.close()
     
-    return system_prompt + summaries[::-1] + messages[::-1]
+    return system_prompt + summaries + messages
 
 
 def get_message_count(user_id):

@@ -108,32 +108,35 @@ async def chat_handler(message: types.Message):
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     
     try:
+        # 1. Загружаем ТЕКУЩУЮ историю (без нового сообщения!)
+        history = get_history(user_id)
+        
+        # 2. Определяем, нужен ли поиск
         needs_search, search_query = needs_search_simple(user_text)
         
         if needs_search:
-            status_msg = await message.answer(f"🔎 Ищу информацию...")
+            status_msg = await message.answer(f"🔎 Ищу: {search_query}...")
             search_results = await search_searxng(search_query, max_results=4)
             
-            history = get_history(user_id)
+            # Добавляем результаты поиска В КОНТЕКСТ (но не в базу!)
             history.append({"role": "system", "content": f"🌐 Поиск: {search_results}"})
-            history.append({"role": "user", "content": user_text})
-            
-            ai_response = await get_llm_response(history)
-            
-            add_message(user_id, "user", user_text, auto_summary=True)
-            add_message(user_id, "assistant", ai_response, auto_summary=False)
-            
+        
+        # 3. ДОБАВЛЯЕМ сообщение пользователя В ИСТОРИЮ (только здесь!)
+        history.append({"role": "user", "content": user_text})
+        
+        # 4. Запрос к LLM
+        ai_response = await get_llm_response(history)
+        
+        # 5. СОХРАНЯЕМ оба сообщения в базу (пользователь + ответ)
+        add_message(user_id, "user", user_text, auto_summary=True)
+        add_message(user_id, "assistant", ai_response, auto_summary=False)
+        
+        # 6. Отправляем ответ
+        if needs_search:
             await status_msg.edit_text(ai_response)
         else:
-            history = get_history(user_id)
-            history.append({"role": "user", "content": user_text})
-            
-            ai_response = await get_llm_response(history)
-            
-            add_message(user_id, "user", user_text, auto_summary=True)
-            add_message(user_id, "assistant", ai_response, auto_summary=False)
-            
             await message.answer(ai_response)
+            
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 

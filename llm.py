@@ -12,6 +12,12 @@ async def get_llm_response(messages: list, temperature: float = 0.7) -> str:
         "max_tokens": -1,
         "stream": False
     }
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"📤 Отправляю в LLM {len(messages)} сообщений:")
+    for i, msg in enumerate(messages[-5:], 1):  # Последние 5
+        logger.debug(f"  {i}. [{msg['role']}] {msg['content'][:100]}...")
     
     try:
         async with aiohttp.ClientSession() as session:
